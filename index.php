@@ -1,30 +1,76 @@
 <?php
     // Designed and Built by Ross Skeels
     // NextLight Network Operations
-    // 2022-02-2
+    // 2022-02-4
     //
     // PHP7.4
-    // MariaDB
-    // Grafana
+    // MariaDB 15.1
+    // Grafana 8.3.4
 
     $techNames = array("Ben","Dan","James","Jesse","Mike","Spencer");
-
     $dateTime = date("Y-m-d h:i:s");
+    $postVarsNum = array("eqptIssued",
+                    "eqptCleaned",
+                    "ordersNextDay",
+                    "ordersWalkIn",
+                    "callsPresented",
+                    "callsHandled",
+                    "callsAbandoned",
+                    "callsAvgTimeMin",
+                    "callsAvgTimeSec",
+                    "callsBackline",
+                    "commsEmailIM",
+                    "commsVM");
 
-    function validatePOST($postVar){
-        global $validateError;
-        if(isset($_POST[$postVar])){
-            if($_POST[$postVar] === "0" || !empty($_POST[$postVar])){
-                if(preg_match('/[0-9]/',htmlspecialchars($_POST[$postVar]))){
-                    return true;
-                }else{$validateError = "The value of '$postVar' is not valid!";}
-            }else{$validateError = "Make sure no variables are empty! Try again.";}
-        }else{$validateError = "Make sure all variables are set!";}
+    function pdoConnect(){
+        global $pdoh;
+        require "/var/www/analytics.mynextlight.net/site_elements/db_config.php";
+        if($pdoh)
+            return;
+        $dsn = "mysql:host={$dbConfig['server']};port={$dbConfig['port']};dbname={$dbConfig['db']}";
+        try{
+            $pdoh = new PDO($dsn,$dbConfig['username'],$dbConfig['password']);
+            $pdoh->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_WARNING);
+        }catch (PDOException $err){
+            die("Error:" . $err->getMessage());
+        }
+    }
+    function pdoDisconnect(){
+        global $pdoh;
+        $pdoh = null;
+    }
+
+    function validatePOSTnum($postVars){
+        global $validateNumError;
+        $successCounter = 0;
+        foreach($postVars as $af){
+            if(isset($_POST[$af])){
+                if($_POST[$af] === "0" || !empty($_POST[$af])){
+                    if(is_numeric(htmlspecialchars($_POST[$af]))){
+                            $successCounter++;
+                    }else{$validateNumError = "The value of '$af' is not valid!";}
+                }else{$validateNumError = "'$af' is empty! Try again.";}
+            }else{$validateNumError = "Make sure '$af' is set!";}
+        }
+        return $successCounter;
+    }
+    function validatePOSTdate($date){
+        $dateExploded = explode("-",$date);
+        return checkdate($dateExploded[1],$dateExploded[2],$dateExploded[0]);
     }
 
     if(isset($_POST['submit']) && $_POST['submit'] === "Send It!"){
-        if(validatePOST('eqptIssued')){
-            echo "success";
+        if(validatePOSTnum($postVarsNum) == count($postVarsNum)){
+            if(validatePOSTdate(htmlspecialchars($_POST['dateSubmitted']))){
+                $callsAvgTime = "00:{$_POST['callsAvgTimeMin']}:{$_POST['callsAvgTimeSec']}";
+                $mysqlInsert = "INSERT INTO supportMetrics (date,eqptIssued,eqptCleaned,ordersNextDay,ordersWalkIn,callsPresented,callsHandled,callsAbandoned,callsAvgTime,callsBackline,commsEmailIM,commsVM,dateSubmitted)
+                VALUES ('{$_POST["dateSubmitted"]}','{$_POST["eqptIssued"]}','{$_POST["eqptCleaned"]}','{$_POST["ordersNextDay"]}','{$_POST["ordersWalkIn"]}','{$_POST["callsPresented"]}','{$_POST["callsHandled"]}','{$_POST["callsAbandoned"]}','$callsAvgTime','{$_POST["callsBackline"]}','{$_POST["commsEmailIM"]}','{$_POST["commsVM"]}','$dateTime')";
+
+                pdoConnect();
+                $sth = $pdoh->prepare($mysqlInsert);
+                $sth->execute();
+                pdoDisconnect();
+            }
         }
     }
 ?>
@@ -94,7 +140,7 @@
     </style>
 </head>
 <body>
-    <h1>TSR Metrics</h1>
+    <a href="/" style="color:inherit;text-decoration:none;"><h1>TSR Metrics</h1></a>
     <main>
         <div>
             <p>Fill out the form below.</p>
@@ -103,24 +149,17 @@
         <hr>
         <div>
             <p>Today's Date: <?php echo date("Y-m-d"); ?></p>
-            <?php echo "<p class='warning'>$validateError</p>";?>
+            <?php
+                if(isset($validateNumError)){
+                    echo "<p class='warning'>$validateNumError</p>";
+                }
+            ?>
             <form action="/" method="POST">
-                <!--<div class="question">
-                    <label for="techName">Tech Name:</label>
-                    <select id="techName" name="techName" required>
-                        <option value="" selected disabled hidden>-</option>
-                        <?php
-                            foreach($techNames as $techName){
-                                echo "<option value='$techName'>$techName</option>";
-                            }
-                        ?>
-                    </select>
-                </div>-->
                 <hr>
                 <h3>Equipment Handled</h3>
                 <div class="question">
                     <label>Equipment Issued:</label>
-                    <input type="number" min="0" max="99" class="numBox" id="eqptIssued" name="eqptIssued" placeholder="0-99" value="0" >
+                    <input type="number" min="0" max="99" class="numBox" id="eqptIssued" name="eqptIssued" placeholder="0-99" value="0" required>
                 </div>
                 <div class="question">
                     <label>Equipment Cleaned:</label>
@@ -152,7 +191,8 @@
                 </div>
                 <div class="question">
                     <label>Average Call Time:</label>
-                    <input type="number" min="0" max="99" class="numBox" id="callsAvgTime" name="callsAvgTime" placeholder="0-99" value="0" required>
+                    <input type="number" min="0" max="60" class="numBox" id="callsAvgTimeMin" name="callsAvgTimeMin" placeholder="0-60" value="0" required><span> :</span>
+                    <input type="number" min="0" max="60" class="numBox" id="callsAvgTimeSec" name="callsAvgTimeSec" placeholder="0-60" value="0" required>
                 </div>
                 <hr>
                 <h3>Other Communications</h3>
@@ -166,14 +206,14 @@
                 </div>
                 <div class="question">
                     <label>Voicemail:</label>
-                    <input type="number" min="0" max="99" class="numBox" id="commsVM" name="commsVM" placeholder="0-99" value="0" required>
+                    <input type="text" min="0" max="99" class="numBox" id="commsVM" name="commsVM" placeholder="0-99" value="0" >
                 </div>
                 <hr>
                 <p class="warning">It is crucial that the date is set to when the reported data occured.</p>
                 <p class="warning">The data will be shown on the date that is reported below.</p>
                 <div class="question">
                     <label>Date of results above:</label>
-                    <input type="date" id="dataDate" name="dataDate" value=<?php echo $dateTime;?> required>
+                    <input type="date" id="dateSubmitted" name="dateSubmitted" value=<?php echo date("Y-m-d");?> required>
                 </div>
                 <div id="submit">
                     <input type="submit" name ="submit" value="Send It!">
